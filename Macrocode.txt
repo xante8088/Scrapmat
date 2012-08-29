@@ -1,1 +1,492 @@
-something
+Public Sub ConsolidateSheets()
+    Dim Wb1 As Workbook
+    Dim Wb2 As Workbook
+    Dim ws1 As Worksheet
+    Dim ws2 As Worksheet
+    Dim ws3 As Worksheet
+    Dim rng1 As Range
+    Dim rng2 As Range
+    Dim rng3 As Range
+    Dim rngArea As Range
+    Dim lrowSpace As Long
+    Dim lSht As Long
+    Dim lngCalc As Long
+    Dim lngRow As Long
+    Dim lngCol As Long
+    Dim X()
+    Dim bProcessFolder As Boolean
+    Dim bNewSheet As Boolean
+     
+    Dim StrPrefix
+    Dim strFileName As String
+    Dim strFolderName As String
+     
+     'variant declaration needed for the Shell object to use a default directory
+    Dim strDefaultFolder As Variant
+     
+     
+    bProcessFolder = Application.InputBox("Process a single folder (TRUE)," & vbNewLine & "or single file (FALSE)", "Application Scope: Folder or single File", "True", , , , , 4)
+    bNewSheet = Application.InputBox("Extract all data to a single sheet (TRUE)," & vbNewLine & "or a target file sheet for each source sheet(FALSE)", "Output Format: Single sheet or sheet by sheet collection", "True", , , , , 4)
+    If Not bProcessFolder Then
+        If Not bNewSheet Then
+            MsgBox "There isn't much point creating a exact replica of your source file :)"
+            Exit Sub
+        End If
+    End If
+     
+     'set default directory here if needed
+    strDefaultFolder = "S:\EXCEL\Locked ScrapMat\Columns"
+     
+     'If the user is collating all the sheets to a single target sheet then the row spacing
+     'to distinguish between different sheets can be set here
+    lrowSpace = 1
+     
+    If bProcessFolder Then
+        strFolderName = BrowseForFolder(strDefaultFolder)
+         'Look for xls, xlsx, xlsm files
+        strFileName = Dir(strFolderName & "\*.xls*")
+    Else
+        strFileName = Application _
+        .GetOpenFilename("Select file to process (*.xls), *.xls")
+    End If
+     
+    Set Wb1 = Workbooks.Add(1)
+    Set ws1 = Wb1.Sheets(1)
+    If Not bNewSheet Then ws1.Range("A1:B1") = Array("workbook name", "worksheet count")
+     
+     'Turn off screenupdating, events, alerts and set calculation to manual
+    With Application
+        .DisplayAlerts = False
+        .EnableEvents = False
+        .ScreenUpdating = False
+        lngCalc = .Calculation
+        .Calculation = xlCalculationManual
+    End With
+     
+     'set path outside the loop
+    StrPrefix = strFolderName & IIf(bProcessFolder, "\", vbNullString)
+     
+    Do While Len(strFileName) > 0
+         'Provide progress status to user
+        Application.StatusBar = Left("Processing " & strFolderName & "\" & strFileName, 255)
+         'Open each workbook in the folder of interest
+        Set Wb2 = Workbooks.Open(StrPrefix & strFileName)
+        If Not bNewSheet Then
+             'add summary details to first sheet
+            ws1.Cells(Rows.Count, "A").End(xlUp).Offset(1, 0) = Wb2.Name
+            ws1.Cells(Rows.Count, "A").End(xlUp).Offset(0, 1) = Wb2.Sheets.Count
+        End If
+                For Each ws2 In Wb2.Sheets
+            If bNewSheet Then
+                 'All data to a single sheet
+                 'Skip importing target sheet data if the source sheet is blank
+                Set rng2 = ws2.Cells.Find("*", ws2.[a1], xlValues, , xlByRows, xlPrevious)
+                 
+                If Not rng2 Is Nothing Then
+                    Set rng1 = ws1.Cells.Find("*", ws1.[a1], xlValues, , xlByRows, xlPrevious)
+                     'Find the first blank row on the target sheet
+                    If Not rng1 Is Nothing Then
+                        Set rng3 = ws2.Range(ws2.UsedRange.Cells(1), ws2.Cells(rng2.Row, "A"))
+                         'Ensure that the row area in the target sheet won't be exceeded
+                        If rng3.Rows.Count + rng1.Row < Rows.Count Then
+                             'Copy the data from the used range of each source sheet to the first blank row
+                             'of the target sheet, using the starting column address from the source sheet being copied
+                            ws2.UsedRange.Copy ws1.Cells(rng1.Row + 1 + lrowSpace, ws2.UsedRange.Cells(1).Column)
+                        Else
+                            MsgBox "Summary sheet size exceeded. Process stopped on " & vbNewLine & _
+                            "sheet: " & ws2.Name & vbNewLine & "of" & vbNewLine & "workbook: " & Wb2.Name
+                            Wb2.Close False
+                            Exit Do
+                        End If
+                         'colour the first of any spacer rows
+                        If lrowSpace <> 0 Then ws1.Rows(rng1.Row + 1).Interior.Color = vbGreen
+                    Else
+                         'target sheet is empty so copy to first row
+                        ws2.UsedRange.Copy ws1.Cells(1, ws2.UsedRange.Cells(1).Column)
+                    End If
+                End If
+            Else
+                 'new target sheet for each source sheet
+                ws2.Copy after:=Wb1.Sheets(Wb1.Sheets.Count)
+                 'Remove any links in our target sheet
+                With Wb1.Sheets(Wb1.Sheets.Count).Cells
+                    .Copy
+                    .PasteSpecial xlPasteValues
+                End With
+                On Error Resume Next
+                Wb1.Sheets(Wb1.Sheets.Count).Name = ws2.Name
+                 'sheet name already exists in target workbook
+                If Err.Number <> 0 Then
+                     'Add a number to the sheet name till a unique name is derived
+                    Do
+                        lSht = lSht + 1
+                        Set ws3 = Wb1.Sheets(ws2.Name & " " & lSht)
+                    Loop While Not ws3 Is Nothing
+                    lSht = 0
+                End If
+                On Error GoTo 0
+            End If
+        Next ws2
+         'Close the opened workbook
+        Wb2.Close False
+         'Check whether to force a DO loop exit if processing a single file
+        If bProcessFolder = False Then Exit Do
+        strFileName = Dir
+    Loop
+     
+     'Remove any links if the user has used a target sheet
+    If bNewSheet Then
+        With ws1.UsedRange
+            .Copy
+            .Cells(1).PasteSpecial xlPasteValues
+            .Cells(1).Activate
+        End With
+    Else
+         'Format the summary sheet if the user has created separate target sheets
+        ws1.Activate
+        ws1.Range("A1:B1").Font.Bold = True
+        ws1.Columns.AutoFit
+    End If
+     
+    With Application
+        .CutCopyMode = False
+        .DisplayAlerts = True
+        .EnableEvents = True
+        .ScreenUpdating = True
+        .Calculation = lngCalc
+        .StatusBar = vbNullString
+    End With
+End Sub
+ 
+ 
+Function BrowseForFolder(Optional OpenAt As Variant) As Variant
+     'From Ken Puls as used in his vbaexpress.com article
+     'http://www.vbaexpress.com/kb/getarticle.php?kb_id=284
+     
+    Dim ShellApp As Object
+     'Create a file browser window at the default folder
+    Set ShellApp = CreateObject("Shell.Application"). _
+    BrowseForFolder(0, "Please choose a folder", 0, OpenAt)
+     
+     'Set the folder to that selected.  (On error in case cancelled)
+    On Error Resume Next
+    BrowseForFolder = ShellApp.self.Path
+    On Error GoTo 0
+     
+     'Destroy the Shell Application
+    Set ShellApp = Nothing
+     
+     'Check for invalid or non-entries and send to the Invalid error
+     'handler if found
+     'Valid selections can begin L: (where L is a letter) or
+     '\\ (as in \\servername\sharename.  All others are invalid
+    Select Case Mid(BrowseForFolder, 2, 1)
+    Case Is = ":"
+        If Left(BrowseForFolder, 1) = ":" Then GoTo Invalid
+    Case Is = "\"
+        If Not Left(BrowseForFolder, 1) = "\" Then GoTo Invalid
+    Case Else
+        GoTo Invalid
+    End Select
+     
+    Exit Function
+     
+Invalid:
+     'If it was determined that the selection was invalid, set to False
+    BrowseForFolder = False
+End Function
+
+
+Sub deleteblankrows()
+'This speeds up the macro by disabling autocalculation, screenupdating, alerts, and events
+ With Application
+        .DisplayAlerts = False
+        .EnableEvents = False
+        .ScreenUpdating = False
+        lngCalc = .Calculation
+        .Calculation = xlCalculationManual
+    End With
+    ' Deletes Rows that do not have Information in column A and B
+    ' The downside to this is it goes by the last row to have info in A or B
+    ' This might be fixed by deleting erronious sheets that are not needed
+For i = Cells(Rows.Count, "A").End(xlUp).Row To 1 Step -1
+    ' if current row column A and B both are blank, then delte the row
+If IsEmpty(Cells(i, "B")) And IsEmpty(Cells(i, "A")) Then Rows(i).EntireRow.Delete
+Next i
+    ' Deletes files in the following path
+    ' Should be the path where the temp files before consolidation are.
+    On Error Resume Next
+    Kill "S:\EXCEL\Locked ScrapMat\Columns\*.xls"
+    On Error GoTo 0
+    
+    With Application
+        .CutCopyMode = False
+        .DisplayAlerts = True
+        .EnableEvents = True
+        .ScreenUpdating = True
+        .Calculation = lngCalc
+        .StatusBar = vbNullString
+    End With
+    
+End Sub
+
+
+
+Sub DeleteRows100_150()
+'
+' Delete 100-150 Macro
+'
+
+'Deletes Rows 100-150
+
+    Rows("2:2").Select
+    Range("B2").Activate
+    ActiveWindow.SmallScroll Down:=126
+    Range("A100:AG1500").Select
+    Range("AG100").Activate
+    Selection.Delete Shift:=xlUp
+End Sub
+
+Sub DeleteRows150_1400()
+'
+' Delete 150-1400 Macro
+'
+'Delets Rows 150-1400
+
+    Rows("2:2").Select
+    Range("B2").Activate
+    ActiveWindow.SmallScroll Down:=126
+    Range("A150:AG1400").Select
+    Range("AG150").Activate
+    Selection.Delete Shift:=xlUp
+End Sub
+
+Public Sub wsheetnamecolumnadd()
+    Dim Wb1 As Workbook
+    Dim Wb2 As Workbook
+    Dim ws1 As Worksheet
+    Dim ws2 As Worksheet
+    Dim ws3 As Worksheet
+    Dim rng1 As Range
+    Dim rng2 As Range
+    Dim rng3 As Range
+    Dim rngArea As Range
+    Dim lrowSpace As Long
+    Dim lSht As Long
+    Dim lngCalc As Long
+    Dim lngRow As Long
+    Dim lngCol As Long
+    Dim X()
+    Dim bProcessFolder As Boolean
+    Dim bNewSheet As Boolean
+     
+    Dim StrPrefix
+    Dim strFileName As String
+    Dim strFolderName As String
+     
+     'variant declaration needed for the Shell object to use a default directory
+    Dim strDefaultFolder As Variant
+     
+     
+    bProcessFolder = Application.InputBox("Process a single folder (TRUE)," & vbNewLine & "or single file (FALSE)", "Application Scope: Folder or single File", "True", , , , , 4)
+    bNewSheet = Application.InputBox("Extract all data to a single sheet (TRUE)," & vbNewLine & "or a target file sheet for each source sheet(FALSE)", "Output Format: Single sheet or sheet by sheet collection", "True", , , , , 4)
+    If Not bProcessFolder Then
+        If Not bNewSheet Then
+            MsgBox "There isn't much point creating a exact replica of your source file :)"
+            Exit Sub
+        End If
+    End If
+     
+     'set default directory here if needed
+    strDefaultFolder = "S:\EXCEL\Locked ScrapMat"
+     
+     'If the user is collating all the sheets to a single target sheet then the row spacing
+     'to distinguish between different sheets can be set here
+    lrowSpace = 1
+     
+    If bProcessFolder Then
+        strFolderName = BrowseForFolder(strDefaultFolder)
+         'Look for xls, xlsx, xlsm files
+        strFileName = Dir(strFolderName & "\*.xls*")
+    Else
+        strFileName = Application _
+        .GetOpenFilename("Select file to process (*.xls), *.xls")
+    End If
+     
+    If Not bNewSheet Then ws1.Range("A1:B1") = Array("workbook name", "worksheet count")
+     
+     'Turn off screenupdating, events, alerts and set calculation to manual
+    With Application
+        .DisplayAlerts = False
+        .EnableEvents = False
+        .ScreenUpdating = False
+        lngCalc = .Calculation
+        .Calculation = xlCalculationManual
+    End With
+     
+     'set path outside the loop
+    StrPrefix = strFolderName & IIf(bProcessFolder, "\", vbNullString)
+    'get the column to input data into
+    lclmn = Application.InputBox("Enter the column to put Worksheet Names" & vbNewLine & "BPCuffs AH, Unifusors AE", "This will overwrite any data, and save the files!", "AH", , , , , 2)
+    'if cancel button is clicked then end
+    If lclmn = vbNullString Then
+    Exit Sub
+    End If
+    
+    Do While Len(strFileName) > 0
+         'Provide progress status to user
+        Application.StatusBar = Left("Processing " & strFolderName & "\" & strFileName, 255)
+         'Open each workbook in the folder of interest
+        Set Wb2 = Workbooks.Open(StrPrefix & strFileName)
+
+        For Each ws2 In Wb2.Sheets
+        'Unprotect sheets so we can edit them
+        ws2.Unprotect "qa"
+        'Fills in AH with the worksheet name, starting with the last cell in
+        'AF that has contents and ends at the second row.
+        n = 1
+          For i = Sheets(ws2.Name).Cells(Rows.Count, "B").End(xlUp).Row To 2 Step -1
+             wsname = ws2.Name
+             Application.StatusBar = Left("Processing " & n & "of " & Sheets(ws2.Name).Cells(Rows.Count, "B").End(xlUp).Row, 255)
+             Worksheets(ws2.Name).Range(lclmn & i).Value = ws2.Name
+             n = n + 1
+          Next i
+        'Protects the worksheet allowing filtering and pivottables
+        ws2.Protect "qa", AllowFiltering, AllowUsingPivotTables
+        Next ws2
+         'Save workbook
+        Wb2.SaveAs "S:\EXCEL\Locked ScrapMat\Columns\" & Wb2.Name & ".xls", FileFormat:=56
+         'Close the opened workbook
+        Wb2.Close False
+         'Check whether to force a DO loop exit if processing a single file
+        If bProcessFolder = False Then Exit Do
+        strFileName = Dir
+    Loop
+     
+     'Remove any links if the user has used a target sheet
+    If bNewSheet Then
+    End If
+     
+    With Application
+        .CutCopyMode = False
+        .DisplayAlerts = True
+        .EnableEvents = True
+        .ScreenUpdating = True
+        .Calculation = lngCalc
+        .StatusBar = vbNullString
+    End With
+End Sub
+
+Sub Save_File_Dialog()
+
+Dim wbcodebook As ThisWorkbook
+Do
+    fName = Application.GetSaveAsFilename
+Loop Until fName <> False
+wbcodebook.SaveAs FileName:=fName
+
+End Sub
+
+
+Public Sub runall()
+
+Call wsheetnamecolumnadd
+Call ConsolidateSheets
+Call deleteblankrows
+
+
+End Sub
+
+Sub Delete_date()
+
+Dim c As Range
+With ActiveSheet.Range("A:A")
+Do
+Set c = .Find("Date", LookIn:=xlValues, lookat:=xlPart, _
+MatchCase:=False)
+If c Is Nothing Then Exit Do
+c.EntireRow.Delete
+Loop
+End With
+
+End Sub
+Public Sub comparecolumns()
+
+Dim cs1 As String
+Dim cs2 As String
+cs1 = ""
+cs2 = ""
+ws1 = ""
+ws2 = ""
+wsc = 1
+ec = 2
+cc = 2
+ch = 1
+tWS = ActiveWorkbook.Worksheets.Count - 1
+cws = 1
+ 
+'Turn off screenupdating, events, alerts and set calculation to manual
+With Application
+    .DisplayAlerts = False
+    .EnableEvents = False
+    .ScreenUpdating = False
+    lngCalc = .Calculation
+    .Calculation = xlCalculationManual
+End With
+
+Do While cws < tWS
+
+Sheets(wsc).Select
+ws1 = ActiveSheet.Name
+cs1 = ActiveSheet.Range("A1").Value
+Sheets(wsc + 1).Select
+ws2 = ActiveSheet.Name
+cs2 = ActiveSheet.Range("A1").Value
+    Do While cc < 40
+        If cs1 = cs2 Then
+            Sheets(wsc).Select
+            ws1 = ActiveSheet.Name
+            cs1 = Cells(ch, cc).Value
+            Sheets(wsc + 1).Select
+            ws2 = ActiveSheet.Name
+            cs2 = Cells(ch, cc).Value
+            cc = cc + 1
+    Else
+        
+        MsgBox "Error Column Mismatch. Process stopped on " & vbNewLine & _
+        "sheet: " & ws2 & vbNewLine & "column " & cs2 & vbNewLine & "Does Not Match " & cs1
+        Exit Sub
+        ec = ec + 2
+
+        Sheets(wsc).Select
+        ws1 = ActiveSheet.Name
+        Sheets(wsc + 1).Select
+        ws2 = ActiveSheet.Name
+        cs1 = Cells(ch, cc).Value
+        cs2 = Cells(ch, cc).Value
+        cc = cc + 1
+        End If
+    Loop
+    cc = 2
+wsc = wsc + 1
+cws = cws + 1
+Loop
+MsgBox "No Errors Found."
+With Application
+    .DisplayAlerts = True
+    .EnableEvents = True
+    .ScreenUpdating = True
+    lngCalc = .Calculation
+    .Calculation = xlAutomatic
+End With
+End Sub
+
+
+
+
+
+
+
+
+
+
